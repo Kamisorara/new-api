@@ -139,4 +139,4 @@ export type ApiKeysDialogType =
   | 'cc-switch'
   | 'statistics'
 
-export type TokenStatTimeRange = '1d' | '7d' | '30d' | 'all'
+export type TokenStatTimeRange = '1d' | '7d' | '30d' | 'all' | 'custom'

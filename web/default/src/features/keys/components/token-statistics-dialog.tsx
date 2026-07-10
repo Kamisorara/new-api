@@ -21,6 +21,7 @@ import { BarChart3, Coins, Hash, Timer } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DateTimePicker } from '@/components/datetime-picker'
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import {
@@ -31,6 +32,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Label } from '@/components/ui/label'
 import { getDashboardChartColors } from '@/features/dashboard/lib/charts'
 import { StatCard } from '@/features/dashboard/components/ui/stat-card'
 import { useChartTheme } from '@/lib/use-chart-theme'
@@ -53,6 +55,7 @@ const TIME_RANGE_OPTIONS: { value: TokenStatTimeRange; label: string }[] = [
   { value: '7d', label: '7 Days' },
   { value: '30d', label: '30 Days' },
   { value: 'all', label: 'All Time' },
+  { value: 'custom', label: 'Custom' },
 ]
 
 function rangeToTimestamps(range: TokenStatTimeRange): {
@@ -61,13 +64,26 @@ function rangeToTimestamps(range: TokenStatTimeRange): {
 } {
   const end = Math.floor(Date.now() / 1000)
   if (range === 'all') return { start: 0, end: 0 }
-  const daysByRange: Record<Exclude<TokenStatTimeRange, 'all'>, number> = {
+  const daysByRange: Record<Exclude<TokenStatTimeRange, 'all' | 'custom'>, number> = {
     '1d': 1,
     '7d': 7,
     '30d': 30,
   }
-  const days = daysByRange[range as Exclude<TokenStatTimeRange, 'all'>]
+  const days = daysByRange[range as Exclude<TokenStatTimeRange, 'all' | 'custom'>]
   return { start: end - days * 86400, end }
+}
+
+function customRangeToTimestamps(startDate: Date | undefined, endDate: Date | undefined): {
+  start: number
+  end: number
+} {
+  if (!startDate || !endDate) {
+    return { start: 0, end: 0 }
+  }
+  return {
+    start: Math.floor(startDate.getTime() / 1000),
+    end: Math.floor(endDate.getTime() / 1000),
+  }
 }
 
 // Format a bucket unix-timestamp for the chart x-axis. Buckets are aligned to
@@ -98,6 +114,8 @@ export function TokenStatisticsDialog({
   const { t } = useTranslation()
   const { resolvedTheme, themeReady } = useChartTheme()
   const [range, setRange] = useState<TokenStatTimeRange>('7d')
+  const [customStartDate, setCustomStartDate] = useState<Date | undefined>(undefined)
+  const [customEndDate, setCustomEndDate] = useState<Date | undefined>(undefined)
   const [stat, setStat] = useState<TokenUsageStat | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -111,7 +129,24 @@ export function TokenStatisticsDialog({
       return
     }
     let cancelled = false
-    const { start, end } = rangeToTimestamps(range)
+    let start: number
+    let end: number
+
+    if (range === 'custom') {
+      if (!customStartDate || !customEndDate) {
+        setStat(null)
+        setLoading(false)
+        setError(false)
+        return
+      }
+      const timestamps = customRangeToTimestamps(customStartDate, customEndDate)
+      start = timestamps.start
+      end = timestamps.end
+    } else {
+      const timestamps = rangeToTimestamps(range)
+      start = timestamps.start
+      end = timestamps.end
+    }
     setLoading(true)
     setError(false)
     void (async () => {
@@ -136,7 +171,7 @@ export function TokenStatisticsDialog({
     return () => {
       cancelled = true
     }
-  }, [open, tokenId, range])
+  }, [open, tokenId, range, customStartDate, customEndDate])
 
   const timelineSpec = useMemo(() => {
     if (!stat || (stat.timeline?.length ?? 0) === 0) return null
@@ -261,6 +296,34 @@ export function TokenStatisticsDialog({
           </Button>
         ))}
       </div>
+
+      {/* Custom date range picker */}
+      {range === 'custom' && (
+        <div className='space-y-2'>
+          <div className='flex flex-col gap-2 sm:flex-row'>
+            <div className='flex-1'>
+              <Label className='mb-1.5 text-sm'>{t('Start Date')}</Label>
+              <DateTimePicker
+                value={customStartDate}
+                onChange={(date) => {
+                  setCustomStartDate(date)
+                }}
+                placeholder={t('Select start date')}
+              />
+            </div>
+            <div className='flex-1'>
+              <Label className='mb-1.5 text-sm'>{t('End Date')}</Label>
+              <DateTimePicker
+                value={customEndDate}
+                onChange={(date) => {
+                  setCustomEndDate(date)
+                }}
+                placeholder={t('Select end date')}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
