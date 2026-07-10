@@ -25,6 +25,7 @@ import type {
   GetApiKeysResponse,
   SearchApiKeysParams,
   ApiKeyFormData,
+  TokenUsageStat,
 } from './types'
 
 // ============================================================================
@@ -114,5 +115,19 @@ export async function fetchTokenKeysBatch(ids: number[]): Promise<{
   data?: { keys: Record<number, string> }
 }> {
   const res = await api.post('/api/token/batch/keys', { ids })
+  return res.data
+}
+
+// Get per-token usage statistics (totals + timeline + by-model) from logs
+export async function getTokenStat(
+  tokenId: number,
+  startTimestamp?: number,
+  endTimestamp?: number
+): Promise<ApiResponse<TokenUsageStat>> {
+  const queryParams = new URLSearchParams()
+  queryParams.set('token_id', String(tokenId))
+  if (startTimestamp) queryParams.set('start_timestamp', String(startTimestamp))
+  if (endTimestamp) queryParams.set('end_timestamp', String(endTimestamp))
+  const res = await api.get(`/api/token/stat?${queryParams.toString()}`)
   return res.data
 }

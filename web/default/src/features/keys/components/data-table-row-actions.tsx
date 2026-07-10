@@ -27,6 +27,7 @@ import {
   Copy,
   Link,
   Loader2,
+  BarChart3,
 } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -281,6 +282,17 @@ export function DataTableRowActions<TData>({
           {t('CC Switch')}
           <DropdownMenuShortcut>
             <ArrowRightLeft size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => {
+            setCurrentRow(apiKey)
+            setOpen('statistics')
+          }}
+        >
+          {t('Usage Statistics')}
+          <DropdownMenuShortcut>
+            <BarChart3 size={16} />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
         {hasChatPresets && (

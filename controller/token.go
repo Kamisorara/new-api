@@ -77,6 +77,33 @@ func GetToken(c *gin.Context) {
 	common.ApiSuccess(c, buildMaskedTokenResponse(token))
 }
 
+// GetTokenStat returns time-dimensioned token-usage statistics for the keys
+// page statistics dialog. It aggregates from the logs table so it works
+// without DataExportEnabled. Auth + ownership reuse GetTokenByIds, which only
+// returns the token when it belongs to the current user.
+func GetTokenStat(c *gin.Context) {
+	tokenId, err := strconv.Atoi(c.Query("token_id"))
+	userId := c.GetInt("id")
+	if err != nil || tokenId <= 0 {
+		common.ApiError(c, fmt.Errorf("invalid token id"))
+		return
+	}
+	// Validate ownership: GetTokenByIds scopes by userId, so a token that does
+	// not belong to the caller returns an error here.
+	if _, err = model.GetTokenByIds(tokenId, userId); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	stat, err := model.GetTokenUsageStat(tokenId, startTimestamp, endTimestamp)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, stat)
+}
+
 func GetTokenKey(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")

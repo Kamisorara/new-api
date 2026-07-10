@@ -692,6 +692,122 @@ func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	return token
 }
 
+// TokenUsageTotals is the lifetime (or time-ranged) aggregate for a single token.
+type TokenUsageTotals struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+	Quota            int64 `json:"quota"`
+	RequestCount     int64 `json:"request_count"`
+}
+
+// TokenUsageBucket is one point on the usage timeline.
+type TokenUsageBucket struct {
+	Bucket        int64 `json:"bucket"`
+	PromptTokens  int64 `json:"prompt_tokens"`
+	TotalTokens   int64 `json:"total_tokens"`
+	Quota         int64 `json:"quota"`
+	RequestCount  int64 `json:"request_count"`
+}
+
+// TokenUsageByModel groups usage per model within the token.
+type TokenUsageByModel struct {
+	ModelName     string `json:"model_name"`
+	TotalTokens   int64  `json:"total_tokens"`
+	Quota         int64  `json:"quota"`
+	RequestCount  int64  `json:"request_count"`
+}
+
+// TokenUsageStat bundles per-token aggregates returned to the keys page.
+type TokenUsageStat struct {
+	Totals   TokenUsageTotals   `json:"totals"`
+	Timeline []TokenUsageBucket `json:"timeline"`
+	ByModel  []TokenUsageByModel `json:"by_model"`
+}
+
+// tokenTimelineBucketSeconds picks a time-bucket width that keeps the timeline
+// readable: hourly for short windows, daily for longer ones. Mirrors the
+// bucketing strategy used by the rankings/dashboard charts.
+func tokenTimelineBucketSeconds(startTimestamp, endTimestamp int64) int64 {
+	const (
+		hour = 3600
+		day  = 86400
+	)
+	span := endTimestamp - startTimestamp
+	if span <= 0 {
+		return day
+	}
+	if span <= 2*day {
+		return hour
+	}
+	return day
+}
+
+// GetTokenUsageStat aggregates per-token usage from the logs table over an
+// optional time range. It is intentionally backed by logs (not quota_data) so
+// it works without DataExportEnabled. token_id is indexed and filters to a
+// single key, keeping the aggregation cheap.
+func GetTokenUsageStat(tokenId int, startTimestamp, endTimestamp int64) (stat TokenUsageStat, err error) {
+	// Initialize as empty slices so JSON serializes [] (not null) when there is
+	// no data; the frontend otherwise reads .length on null and crashes.
+	stat.Timeline = []TokenUsageBucket{}
+	stat.ByModel = []TokenUsageByModel{}
+	base := func() *gorm.DB {
+		tx := LOG_DB.Table("logs").Where("token_id = ?", tokenId).Where("type = ?", LogTypeConsume)
+		if startTimestamp != 0 {
+			tx = tx.Where("created_at >= ?", startTimestamp)
+		}
+		if endTimestamp != 0 {
+			tx = tx.Where("created_at <= ?", endTimestamp)
+		}
+		return tx
+	}
+
+	// Totals
+	if err = base().Select(
+		"COALESCE(sum(prompt_tokens), 0) prompt_tokens, "+
+			"COALESCE(sum(completion_tokens), 0) completion_tokens, "+
+			"COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) total_tokens, "+
+			"COALESCE(sum(quota), 0) quota, "+
+			"count(*) request_count",
+	).Scan(&stat.Totals).Error; err != nil {
+		common.SysError("failed to query token usage totals: " + err.Error())
+		return stat, errors.New("查询令牌使用统计失败")
+	}
+
+	// Timeline (time-bucketed). Use the shared cross-dialect bucket expression
+	// from the rankings queries so SQLite/MySQL/PostgreSQL all behave the same.
+	bucketSize := tokenTimelineBucketSeconds(startTimestamp, endTimestamp)
+	bucketExpr := rankingBucketExpr(bucketSize)
+	if qErr := base().Select(fmt.Sprintf(
+		"%s as bucket, "+
+			"COALESCE(sum(prompt_tokens), 0) prompt_tokens, "+
+			"COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) total_tokens, "+
+			"COALESCE(sum(quota), 0) quota, "+
+			"count(*) request_count",
+		bucketExpr,
+	)).Group(bucketExpr).Order("bucket ASC").Scan(&stat.Timeline).Error; qErr != nil {
+		common.SysError("failed to query token usage timeline: " + qErr.Error())
+		return stat, errors.New("查询令牌使用统计失败")
+	}
+
+	// By model
+	if qErr := base().Select(
+		"model_name, "+
+			"COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) total_tokens, "+
+			"COALESCE(sum(quota), 0) quota, "+
+			"count(*) request_count",
+	).Where("model_name <> ''").
+		Group("model_name").
+		Order("total_tokens DESC").
+		Scan(&stat.ByModel).Error; qErr != nil {
+		common.SysError("failed to query token usage by model: " + qErr.Error())
+		return stat, errors.New("查询令牌使用统计失败")
+	}
+
+	return stat, nil
+}
+
 func CountOldLog(ctx context.Context, targetTimestamp int64) (int64, error) {
 	var total int64
 	if err := LOG_DB.WithContext(ctx).Model(&Log{}).Where("created_at < ?", targetTimestamp).Count(&total).Error; err != nil {

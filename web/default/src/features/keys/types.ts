@@ -50,6 +50,39 @@ export const apiKeySchema = z.object({
 export type ApiKey = z.infer<typeof apiKeySchema>
 
 // ============================================================================
+// Token Usage Statistics Types
+// ============================================================================
+
+export interface TokenUsageTotals {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  quota: number
+  request_count: number
+}
+
+export interface TokenUsageBucket {
+  bucket: number // unix seconds, aligned to hour/day
+  prompt_tokens: number
+  total_tokens: number
+  quota: number
+  request_count: number
+}
+
+export interface TokenUsageByModel {
+  model_name: string
+  total_tokens: number
+  quota: number
+  request_count: number
+}
+
+export interface TokenUsageStat {
+  totals: TokenUsageTotals
+  timeline: TokenUsageBucket[]
+  by_model: TokenUsageByModel[]
+}
+
+// ============================================================================
 // API Request/Response Types
 // ============================================================================
 
@@ -104,3 +137,6 @@ export type ApiKeysDialogType =
   | 'delete'
   | 'batch-delete'
   | 'cc-switch'
+  | 'statistics'
+
+export type TokenStatTimeRange = '1d' | '7d' | '30d' | 'all'
