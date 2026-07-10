@@ -1,0 +1,55 @@
+# Custom single-frontend build: only builds the default theme.
+# Matches the local main.go change where classic embeds point at
+# web/default/dist, so no classic frontend is built.
+#
+# Build:
+#   docker build -f Dockerfile.custom -t new-api:custom .
+# Run:
+#   docker run -d -p 3000:3000 -v new-api-data:/data new-api:custom
+
+# ---- Stage 1: build default frontend (React 19 + Rsbuild) ----
+FROM oven/bun:1 AS builder
+
+WORKDIR /build/web
+COPY web/package.json web/bun.lock ./
+COPY web/default/package.json ./default/package.json
+# classic/package.json must exist for bun to resolve the workspace declared in
+# web/package.json, even though we only build the default theme.
+COPY web/classic/package.json ./classic/package.json
+RUN bun install --frozen-lockfile
+COPY ./web/default ./default
+COPY ./VERSION /build/VERSION
+RUN cd default && DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat /build/VERSION) bun run build
+
+# ---- Stage 2: build Go backend (embeds the default frontend) ----
+FROM golang:1.26.1-alpine AS builder2
+ENV GO111MODULE=on CGO_ENABLED=0
+
+ARG TARGETOS
+ARG TARGETARCH
+ENV GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64}
+ENV GOEXPERIMENT=greenteagc
+
+WORKDIR /build
+
+ADD go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+COPY --from=builder /build/web/default/dist ./web/default/dist
+# main.go embeds web/default/dist for both default and classic themes.
+RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
+
+# ---- Stage 3: minimal runtime image ----
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-ca-certificates
+
+COPY --from=builder2 /build/new-api /
+COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
+EXPOSE 3000
+WORKDIR /data
+ENTRYPOINT ["/new-api"]
